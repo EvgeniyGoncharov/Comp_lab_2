@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -59,65 +59,101 @@ public class FiniteAutomaton
 		}
 	}
 
-	public void PrintDeterministicEquivalent()
+	public void ConvertToDeterministic()
 	{
 		if (_isDeterministic)
 		{
-			Console.WriteLine("Автомат является детерминированным.");
+			Console.WriteLine("Автомат уже является детерминированным.");
+			return;
 		}
-		else
+
+		Console.WriteLine("Конвертирование недетерминированного автомата в детерминированный...");
+
+		var dfaTransitions = new Dictionary<(string, char), string>();
+		var newStates = new Queue<HashSet<string>>();
+		var stateMapping = new Dictionary<HashSet<string>, string>(HashSet<string>.CreateSetComparer());
+		var dfaFinalStates = new HashSet<string>();
+
+		newStates.Enqueue(new HashSet<string> { _initialState });
+		stateMapping[new HashSet<string> { _initialState }] = _initialState;
+
+		while (newStates.Count > 0)
 		{
-			Console.WriteLine("Автомат является недетерминированным.");
-			Console.WriteLine("Переходы для детерминированного автомата:");
+			var currentStates = newStates.Dequeue();
 
-			var deterministicTransitions = new Dictionary<(string, char), string>();
-			var newStates = new Queue<HashSet<string>>();
-			var stateMapping = new Dictionary<HashSet<string>, string>(HashSet<string>.CreateSetComparer());
+			// Проверка, если хотя бы одно состояние из currentStates является конечным в НКА
+			bool isFinalState = currentStates.Any(s => _finalStates.Contains(s));
+			string currentStateName = isFinalState ? $"f{stateMapping.Count}" : $"q{stateMapping.Count}";
 
-			newStates.Enqueue(new HashSet<string> { _initialState });
-			stateMapping[new HashSet<string> { _initialState }] = _initialState;
-
-			while (newStates.Count > 0)
+			if (!stateMapping.ContainsKey(currentStates))
 			{
-				var currentStates = newStates.Dequeue();
-				string currentStateName = stateMapping[currentStates];
+				stateMapping[currentStates] = currentStateName;
+			}
+			else
+			{
+				currentStateName = stateMapping[currentStates];
+			}
 
-				foreach (var symbol in _transitions.Values.SelectMany(t => t).SelectMany(t => t).Distinct())
+			if (isFinalState)
+			{
+				dfaFinalStates.Add(currentStateName); // Добавление в конечные состояния ДКА
+			}
+
+			foreach (char symbol in _transitions.Keys.Select(t => t.Item2).Distinct())
+			{
+				var nextStates = new HashSet<string>();
+
+				foreach (var state in currentStates)
 				{
-					var nextStates = new HashSet<string>();
-
-					foreach (var state in currentStates)
+					var key = (state, symbol);
+					if (_transitions.TryGetValue(key, out List<string> stateTransitions))
 					{
-						var key = (state, symbol);
-						if (_transitions.ContainsKey(key))
-						{
-							nextStates.UnionWith(_transitions[key]);
-						}
-					}
-
-					if (nextStates.Count > 0)
-					{
-						if (!stateMapping.ContainsKey(nextStates))
-						{
-							string newStateName = $"q{stateMapping.Count}";
-							stateMapping[nextStates] = newStateName;
-							newStates.Enqueue(nextStates);
-						}
-
-						deterministicTransitions[(currentStateName, symbol)] = stateMapping[nextStates];
+						nextStates.UnionWith(stateTransitions);
 					}
 				}
-			}
 
-			foreach (var transition in deterministicTransitions)
-			{
-				Console.WriteLine($"{transition.Key.Item1},{transition.Key.Item2}={transition.Value}");
+				if (nextStates.Count > 0)
+				{
+					if (!stateMapping.ContainsKey(nextStates))
+					{
+						// Присваиваем новое имя для нового состояния, добавляя "f", если оно конечное
+						bool nextIsFinalState = nextStates.Any(s => _finalStates.Contains(s));
+						string newStateName = nextIsFinalState ? $"f{stateMapping.Count}" : $"q{stateMapping.Count}";
+
+						stateMapping[nextStates] = newStateName;
+						newStates.Enqueue(nextStates);
+						if (nextIsFinalState)
+						{
+							dfaFinalStates.Add(newStateName);
+						}
+					}
+
+					dfaTransitions[(currentStateName, symbol)] = stateMapping[nextStates];
+				}
 			}
 		}
+
+		Console.WriteLine("Переходы для детерминированного автомата:");
+		foreach (var transition in dfaTransitions)
+		{
+			string fromState = dfaFinalStates.Contains(transition.Key.Item1) ? $"f{transition.Key.Item1.Substring(1)}" : transition.Key.Item1;
+			string toState = dfaFinalStates.Contains(transition.Value) ? $"f{transition.Value.Substring(1)}" : transition.Value;
+			Console.WriteLine($"{fromState},{transition.Key.Item2}={toState}");
+		}
+
+		_transitions = dfaTransitions.ToDictionary(x => x.Key, x => new List<string> { x.Value });
+		_finalStates = dfaFinalStates;
+		_isDeterministic = true;
 	}
 
 	public bool AnalyzeString(string input)
 	{
+		if (!_isDeterministic)
+		{
+			Console.WriteLine("Для анализа строки необходимо преобразовать автомат в детерминированный.");
+			ConvertToDeterministic();
+		}
+
 		string currentState = _initialState;
 
 		foreach (char symbol in input)
@@ -125,12 +161,6 @@ public class FiniteAutomaton
 			if (!_transitions.TryGetValue((currentState, symbol), out List<string> nextStates))
 			{
 				Console.WriteLine($"Ошибка: нет перехода из состояния {currentState} по символу '{symbol}'.");
-				return false;
-			}
-
-			if (nextStates.Count > 1)
-			{
-				Console.WriteLine("Ошибка: автомат не является детерминированным для анализа строки.");
 				return false;
 			}
 
@@ -157,8 +187,7 @@ public class Program
 	{
 		while (true)
 		{
-			Console.WriteLine("Введите путь к файлу с описанием автомата:");
-			string filePath = Console.ReadLine();
+			string filePath = "C:\\Users\\Evgen\\Desktop\\graph\\graph.txt";
 
 			Console.WriteLine("Введите строку для анализа:");
 			string input = Console.ReadLine();
@@ -166,7 +195,7 @@ public class Program
 			try
 			{
 				var automaton = new FiniteAutomaton(filePath);
-				automaton.PrintDeterministicEquivalent();
+				automaton.ConvertToDeterministic();
 				bool result = automaton.AnalyzeString(input);
 				Console.WriteLine(result ? "Строка принята" : "Строка не принята");
 			}
@@ -175,6 +204,5 @@ public class Program
 				Console.WriteLine($"Ошибка: {ex.Message}");
 			}
 		}
-		
 	}
 }
